@@ -16,7 +16,12 @@ const sqlPurchaseSource = `
 		MAX(dept.code) AS dep_code, MAX(dept.name) AS dep_name, m.code AS item_code, MAX(m.name) AS item_name,
 		SUM(CASE WHEN d.doc_no LIKE '%RB%' THEN -t.qty_def ELSE t.qty_def END) AS qty_def,
 		MAX(t.price) as price,
-		SUM(CASE WHEN d.doc_no LIKE '%RB%' THEN -t.qty_def ELSE t.qty_def END * t.price) AS grand_total
+		SUM(CASE WHEN d.doc_no LIKE '%RB%' THEN -t.qty_def ELSE t.qty_def END * t.price) AS grand_total,
+		MAX(d.paid_total) AS paid_total,
+		CASE
+			WHEN MAX(d.paid_total) IS NOT NULL AND MAX(d.paid_total) > 0 THEN 'PAID'
+			ELSE 'UNPAID'
+		END AS status_bayar
 	FROM dbtpurchasedoc d
 	LEFT JOIN dbtpurchasetrans t ON d.id = t.doc_id
 	LEFT JOIN dbmitem m ON t.ite_id = m.id
@@ -38,7 +43,7 @@ func (s *Service) MigratePurchase(ctx context.Context) string {
 	}
 	defer rows.Close()
 
-	const perRow = 11 // doc_date, doc_no_p, par_name, dep_code, dep_name, item_code, item_name, qty, price, grand_total, last_synced
+	const perRow = 13 // doc_date, doc_no_p, par_name, dep_code, dep_name, item_code, item_name, qty, price, grand_total, paid_total, status_bayar, last_synced
 	buffer := make([][]any, 0, batchSize)
 	total := 0
 	flush := func() error {
@@ -87,42 +92,46 @@ func (s *Service) MigratePurchase(ctx context.Context) string {
 
 func (s *Service) scanPurchaseRow(rows *sql.Rows, syncTS string) ([]any, bool) {
 	var (
-		docDate    sql.NullTime
-		docNo      sql.NullString
-		parName    sql.NullString
-		depCode    sql.NullString
-		depName    sql.NullString
-		itemCode   sql.NullString
-		itemName   sql.NullString
-		qtyDef     sql.NullString // DECIMAL from SUM; Java rs.getInt truncates
-		price      sql.NullString
-		grandTotal sql.NullString
+		docDate     sql.NullTime
+		docNo       sql.NullString
+		parName     sql.NullString
+		depCode     sql.NullString
+		depName     sql.NullString
+		itemCode    sql.NullString
+		itemName    sql.NullString
+		qtyDef      sql.NullString // DECIMAL from SUM; Java rs.getInt truncates
+		price       sql.NullString
+		grandTotal  sql.NullString
+		paidTotal   sql.NullString
+		statusBayar sql.NullString
 	)
 	if err := rows.Scan(&docDate, &docNo, &parName, &depCode, &depName, &itemCode, &itemName,
-		&qtyDef, &price, &grandTotal); err != nil {
+		&qtyDef, &price, &grandTotal, &paidTotal, &statusBayar); err != nil {
 		s.logger.Warn("Error processing Purchase row", "err", err)
 		return nil, false
 	}
-	row := make([]any, 11)
-	row[0] = dateString(docDate) // doc_date
-	row[1] = nullStr(docNo)      // doc_no_p
-	row[2] = nullStr(parName)    // par_name
-	row[3] = nullStr(depCode)    // dep_code
-	row[4] = nullStr(depName)    // dep_name
-	row[5] = nullStr(itemCode)   // item_code
-	row[6] = nullStr(itemName)   // item_name
-	row[7] = qtyInt(qtyDef)      // qty (getInt on NULL yields 0 in Java)
-	row[8] = nullStr(price)      // price
-	row[9] = nullStr(grandTotal) // grand_total
-	row[10] = syncTS             // last_synced
+	row := make([]any, 13)
+	row[0] = dateString(docDate)   // doc_date
+	row[1] = nullStr(docNo)        // doc_no_p
+	row[2] = nullStr(parName)      // par_name
+	row[3] = nullStr(depCode)      // dep_code
+	row[4] = nullStr(depName)      // dep_name
+	row[5] = nullStr(itemCode)     // item_code
+	row[6] = nullStr(itemName)     // item_name
+	row[7] = qtyInt(qtyDef)        // qty (getInt on NULL yields 0 in Java)
+	row[8] = nullStr(price)        // price
+	row[9] = nullStr(grandTotal)   // grand_total
+	row[10] = nullStr(paidTotal)   // paid_total
+	row[11] = nullStr(statusBayar) // status_bayar
+	row[12] = syncTS               // last_synced
 	return row, true
 }
 
 // savePurchaseBatch upserts up to batchSize purchase rows in one statement.
 func (s *Service) savePurchaseBatch(ctx context.Context, rows [][]any) error {
-	const perRow = 11
+	const perRow = 13
 	var b strings.Builder
-	b.WriteString(`INSERT INTO purchases (id, doc_date, doc_no_p, par_name, dep_code, dep_name, item_code, item_name, qty, price, grand_total, last_synced) VALUES `)
+	b.WriteString(`INSERT INTO purchases (id, doc_date, doc_no_p, par_name, dep_code, dep_name, item_code, item_name, qty, price, grand_total, paid_total, status_bayar, last_synced) VALUES `)
 	for i := range rows {
 		if i > 0 {
 			b.WriteString(", ")
@@ -138,6 +147,8 @@ func (s *Service) savePurchaseBatch(ctx context.Context, rows [][]any) error {
 		qty = EXCLUDED.qty,
 		price = EXCLUDED.price,
 		grand_total = EXCLUDED.grand_total,
+		paid_total = EXCLUDED.paid_total,
+		status_bayar = EXCLUDED.status_bayar,
 		last_synced = EXCLUDED.last_synced`)
 	_, err := s.pg.ExecContext(ctx, b.String(), flatten(rows)...)
 	if err != nil {

@@ -91,6 +91,7 @@ func EnsurePostgresSchema(ctx context.Context, db *sql.DB) error {
 		`CREATE SEQUENCE IF NOT EXISTS purchase_seq START 1`,
 		`CREATE SEQUENCE IF NOT EXISTS sales_seq START 1`,
 		`CREATE SEQUENCE IF NOT EXISTS stok_seq START 1`,
+		`CREATE SEQUENCE IF NOT EXISTS pricelist_seq START 1`,
 
 		`CREATE TABLE IF NOT EXISTS purchases (
 			id BIGINT PRIMARY KEY DEFAULT nextval('purchase_seq'),
@@ -104,6 +105,8 @@ func EnsurePostgresSchema(ctx context.Context, db *sql.DB) error {
 			qty INTEGER,
 			price NUMERIC(19,2),
 			grand_total NUMERIC(19,2),
+			paid_total NUMERIC(19,2),
+			status_bayar VARCHAR(20),
 			last_synced TIMESTAMP,
 			UNIQUE (doc_no_p, item_code)
 		)`,
@@ -126,9 +129,18 @@ func EnsurePostgresSchema(ctx context.Context, db *sql.DB) error {
 			laba_kotor NUMERIC(19,6),
 			emp_code VARCHAR(50),
 			emp_name TEXT,
+			paid_total NUMERIC(19,2),
+			status_bayar VARCHAR(20),
 			last_synced TIMESTAMP,
 			UNIQUE (doc_no, item_name)
 		)`,
+
+		// Upgrade path for already-provisioned databases: CREATE TABLE IF NOT
+		// EXISTS is a no-op there, so add the new columns idempotently.
+		`ALTER TABLE purchases ADD COLUMN IF NOT EXISTS paid_total NUMERIC(19,2)`,
+		`ALTER TABLE purchases ADD COLUMN IF NOT EXISTS status_bayar VARCHAR(20)`,
+		`ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_total NUMERIC(19,2)`,
+		`ALTER TABLE sales ADD COLUMN IF NOT EXISTS status_bayar VARCHAR(20)`,
 
 		`CREATE TABLE IF NOT EXISTS stok (
 			id BIGINT PRIMARY KEY DEFAULT nextval('stok_seq'),
@@ -161,6 +173,41 @@ func EnsurePostgresSchema(ctx context.Context, db *sql.DB) error {
 			sync_key VARCHAR(100) PRIMARY KEY,
 			sync_value VARCHAR(500)
 		)`,
+
+		// Pricelist is owned by the Google Sheet sync (see service
+		// PricelistSyncer): it mirrors the "PRICELIST&MODAL" tab of the
+		// spreadsheet. Columns match the JPA entity ported in model.Pricelist.
+		`CREATE TABLE IF NOT EXISTS pricelist (
+			id BIGINT PRIMARY KEY,
+			final_pricelist NUMERIC(19,2),
+			item_name VARCHAR(500),
+			modal NUMERIC(19,2),
+			spesifikasi VARCHAR(3000),
+			normalized_item_name VARCHAR(500)
+		)`,
+
+		// Upgrade path for already-provisioned databases (CREATE TABLE IF NOT
+		// EXISTS is a no-op there).
+		`ALTER TABLE pricelist ADD COLUMN IF NOT EXISTS final_pricelist NUMERIC(19,2)`,
+		`ALTER TABLE pricelist ADD COLUMN IF NOT EXISTS item_name VARCHAR(500)`,
+		`ALTER TABLE pricelist ADD COLUMN IF NOT EXISTS modal NUMERIC(19,2)`,
+		`ALTER TABLE pricelist ADD COLUMN IF NOT EXISTS spesifikasi VARCHAR(3000)`,
+		`ALTER TABLE pricelist ADD COLUMN IF NOT EXISTS normalized_item_name VARCHAR(500)`,
+
+		// Lookup indexes mirroring the @Index annotations on the entity. The
+		// normalized column has no unique constraint, so the sync performs an
+		// UPDATE-then-INSERT instead of ON CONFLICT.
+		`CREATE INDEX IF NOT EXISTS idx_pricelist_item_name ON pricelist (item_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_pricelist_norm_item_name ON pricelist (normalized_item_name)`,
+
+		// Align pricelist_seq with existing rows when the table was provisioned
+		// by an earlier schema (e.g. Hibernate ddl-auto) whose sequence may not
+		// cover current MAX(id) — otherwise nextval() would collide with the PK.
+		// Idempotent: never moves the sequence backwards (GREATEST with the
+		// current last_value).
+		`SELECT setval('pricelist_seq', GREATEST(
+			COALESCE((SELECT MAX(id) FROM pricelist), 0),
+			COALESCE((SELECT last_value FROM pricelist_seq), 0)))`,
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {

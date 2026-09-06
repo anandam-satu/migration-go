@@ -1,8 +1,8 @@
 // Command server runs the api-migration worker: a PostgreSQL sink + legacy
 // MySQL source migration service (purchase/sales/stock/SN), an HTTP trigger
-// API (POST /api/v1/migration/{purchase|sales|stock|sn}) and a 30-second
-// auto-sync scheduler. This is the Go port of the Spring Boot application,
-// minus the removed pricelist feature.
+// API (POST /api/v1/migration/{purchase|sales|stock|sn|pricelist}) and two
+// background schedulers (a 30-second auto-sync and a 1-minute Google Sheet
+// pricelist sync). This is the Go port of the Spring Boot application.
 package main
 
 import (
@@ -22,6 +22,15 @@ import (
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
+
+	// Load .env (if present) before reading configuration. Process env vars
+	// already set still win over the file. Fail fast on an explicitly named
+	// ENV_FILE or a malformed .env: continuing on default DB credentials
+	// (which point at real hosts) would be worse than not starting.
+	if err := config.LoadDotEnv(); err != nil {
+		logger.Error("Failed to load .env configuration", "err", err)
+		os.Exit(1)
+	}
 
 	cfg := config.Load()
 

@@ -43,3 +43,31 @@ func inQuietWindow(now time.Time) bool {
 	cur, _ := time.Parse("15:04", now.Format("15:04"))
 	return cur.After(qs) || cur.Before(qe)
 }
+
+// runPricelistScheduler pulls the Google Sheet into public.pricelist once at
+// startup and then every interval (default 1 minute, PRICELIST_SYNC_INTERVAL).
+// Unlike the MySQL migration scheduler this is not gated by the nightly quiet
+// window: the pull is a lightweight read the operator asked to run
+// unconditionally every minute.
+func runPricelistScheduler(ctx context.Context, syncer *service.PricelistSyncer, logger *slog.Logger, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	run := func() {
+		logger.Info("Menjalankan sinkronisasi pricelist dari Google Sheet...")
+		if err := syncer.Sync(ctx); err != nil {
+			logger.Error("Pricelist sync gagal", "err", err)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}

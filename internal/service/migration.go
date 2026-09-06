@@ -1,7 +1,7 @@
 // Package service ports service/MigrationService.java and
-// service/MigrationScheduler.java. The pricelist/Google Sheets feature was
-// intentionally removed, so this service only migrates purchase, sales, stock
-// and serial-number data from the legacy MySQL DB into PostgreSQL.
+// service/MigrationScheduler.java. It migrates purchase, sales, stock and
+// serial-number data from the legacy MySQL DB into PostgreSQL and syncs the
+// Google Sheet pricelist into public.pricelist (see PricelistSyncer).
 package service
 
 import (

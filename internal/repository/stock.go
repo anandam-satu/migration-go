@@ -12,7 +12,8 @@ import (
 )
 
 // NOTE: StockRepository.findDistinctItemCodesSortedByPricelist() is NOT ported:
-// it belongs to the removed pricelist feature.
+// in the Go port the stok ↔ pricelist join is done by the apps that consume
+// the data (both tables expose normalized_item_name), not by this worker.
 
 const stockColumns = `id, item_code, item_name, normalized_item_name, kategori_nama, kategori_itemcode,
 	final_stok, harga_hpp::text AS harga_hpp, grand_total::text AS grand_total, warehouse, last_synced`

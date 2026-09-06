@@ -32,6 +32,16 @@ func Run(ctx context.Context, cfg config.Config, svc *service.Service, pg, mysql
 		go runScheduler(ctx, svc, logger)
 	}
 
+	// Pricelist sync: pulls the Google Sheet "PRICELIST&MODAL" into
+	// public.pricelist every cfg.GoogleSheet.SyncInterval (default 1 minute).
+	// Independent from MySQL — it only needs PostgreSQL + the service-account
+	// file configured via GOOGLE_SERVICE_ACCOUNT_FILE.
+	var pl *service.PricelistSyncer
+	if cfg.GoogleSheet.Enabled() {
+		pl = service.NewPricelistSyncer(pg, cfg.GoogleSheet, logger)
+		go runPricelistScheduler(ctx, pl, logger, cfg.GoogleSheet.SyncInterval)
+	}
+
 	mux := http.NewServeMux()
 	h := &handler{svc: svc, enabled: cfg.MySQL.Enabled, logger: logger}
 
@@ -39,6 +49,20 @@ func Run(ctx context.Context, cfg config.Config, svc *service.Service, pg, mysql
 	mux.HandleFunc("POST /api/v1/migration/sales", h.trigger(h.migrateSales, "Sales", "Migrasi Sales berjalan di background..."))
 	mux.HandleFunc("POST /api/v1/migration/stock", h.trigger(h.migrateStock, "Stock", "Migrasi Stok berjalan di background..."))
 	mux.HandleFunc("POST /api/v1/migration/sn", h.trigger(h.migrateSN, "SN", "Migrasi Serial Number berjalan di background..."))
+	mux.HandleFunc("POST /api/v1/migration/pricelist", func(w http.ResponseWriter, r *http.Request) {
+		if pl == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": 503, "message": "Pricelist sync tidak aktif. Set GOOGLE_SERVICE_ACCOUNT_FILE lalu restart aplikasi."})
+			return
+		}
+		// @Async -> fire-and-forget; do not tie the job to the request ctx.
+		go func() {
+			if err := pl.Sync(context.Background()); err != nil {
+				logger.Error("Pricelist sync gagal (HTTP trigger)", "err", err)
+			}
+		}()
+		logger.Info("Pricelist sync triggered via HTTP")
+		writeJSON(w, http.StatusOK, map[string]any{"status": 200, "message": "Sinkronisasi pricelist dari Google Sheet berjalan di background..."})
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -65,9 +89,10 @@ func Run(ctx context.Context, cfg config.Config, svc *service.Service, pg, mysql
 	}
 }
 
-// runStartupTasks mirrors PricelistNormalizationRunner removal: only the
-// constraint fix (DatabaseMigrationConfig) and schema bootstrap remain. Both
-// are best-effort: PostgreSQL may be reachable later or already provisioned.
+// runStartupTasks runs the schema bootstrap (DatabaseMigrationConfig
+// constraint fix + Hibernate ddl-auto equivalent, which now also creates the
+// pricelist table/sequence). Both are best-effort: PostgreSQL may be
+// reachable later or already provisioned.
 func runStartupTasks(ctx context.Context, pg *sql.DB, logger *slog.Logger) {
 	if err := db.EnsurePostgresSchema(ctx, pg); err != nil {
 		logger.Warn("PostgreSQL schema bootstrap skipped (will rely on existing schema)", "err", err)

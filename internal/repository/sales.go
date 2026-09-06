@@ -67,29 +67,32 @@ func salesSearch(args *[]any, startDate, endDate *time.Time, empCode string, cat
 
 const salesColumns = `id, doc_date, doc_no, code, par_name, dep_code, dep_name, ite_code, item_name, qty,
 	price::text AS price, grand_total::text AS grand_total, hpp_satuan::text AS hpp_satuan,
-	total_hpp::text AS total_hpp, laba_kotor::text AS laba_kotor, emp_code, emp_name, last_synced`
+	total_hpp::text AS total_hpp, laba_kotor::text AS laba_kotor, emp_code, emp_name,
+	paid_total::text AS paid_total, status_bayar, last_synced`
 
 func scanSales(rows *sql.Rows) (model.Sales, error) {
 	var (
-		s          model.Sales
-		docDate    sql.NullTime
-		code       sql.NullString
-		parName    sql.NullString
-		depCode    sql.NullString
-		depName    sql.NullString
-		iteCode    sql.NullString
-		qty        sql.NullInt64
-		price      sql.NullString
-		grandTotal sql.NullString
-		hpp        sql.NullString
-		totalHpp   sql.NullString
-		laba       sql.NullString
-		empCode    sql.NullString
-		empName    sql.NullString
-		lastSynced sql.NullTime
+		s           model.Sales
+		docDate     sql.NullTime
+		code        sql.NullString
+		parName     sql.NullString
+		depCode     sql.NullString
+		depName     sql.NullString
+		iteCode     sql.NullString
+		qty         sql.NullInt64
+		price       sql.NullString
+		grandTotal  sql.NullString
+		hpp         sql.NullString
+		totalHpp    sql.NullString
+		laba        sql.NullString
+		empCode     sql.NullString
+		empName     sql.NullString
+		paidTotal   sql.NullString
+		statusBayar sql.NullString
+		lastSynced  sql.NullTime
 	)
 	err := rows.Scan(&s.ID, &docDate, &s.DocNo, &code, &parName, &depCode, &depName, &iteCode, &s.ItemName,
-		&qty, &price, &grandTotal, &hpp, &totalHpp, &laba, &empCode, &empName, &lastSynced)
+		&qty, &price, &grandTotal, &hpp, &totalHpp, &laba, &empCode, &empName, &paidTotal, &statusBayar, &lastSynced)
 	if err != nil {
 		return s, err
 	}
@@ -112,6 +115,8 @@ func scanSales(rows *sql.Rows) (model.Sales, error) {
 	s.LabaKotor = decPtr(laba)
 	s.EmpCode = strPtr(empCode)
 	s.EmpName = strPtr(empName)
+	s.PaidTotal = decPtr(paidTotal)
+	s.StatusBayar = strPtr(statusBayar)
 	if lastSynced.Valid {
 		t := lastSynced.Time
 		s.LastSynced = &t

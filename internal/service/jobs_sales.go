@@ -60,7 +60,12 @@ const sqlSalesSource = `
 			END
 		) * COALESCE(MAX(sa.price_avg), MAX(t.price)) AS laba_kotor,
 		MAX(e.code) AS emp_code,
-		MAX(e.name) AS emp_name
+		MAX(e.name) AS emp_name,
+		MAX(d.paid_total) AS paid_total,
+		CASE
+			WHEN MAX(d.paid_total) IS NOT NULL AND MAX(d.paid_total) > 0 THEN 'PAID'
+			ELSE 'UNPAID'
+		END AS status_bayar
 	FROM anandamid26.dbtsalesdoc d
 	LEFT JOIN anandamid26.dbtsalestrans t ON d.id = t.doc_id
 	LEFT JOIN dbmemployee e ON d.emp_id = e.id
@@ -93,7 +98,7 @@ func (s *Service) MigrateSales(ctx context.Context) string {
 	}
 	defer rows.Close()
 
-	const perRow = 17 // doc_date, doc_no, code, par_name, dep_code, dep_name, ite_code, item_name, qty, price, grand_total, hpp_satuan, total_hpp, laba_kotor, emp_code, emp_name, last_synced
+	const perRow = 19 // doc_date, doc_no, code, par_name, dep_code, dep_name, ite_code, item_name, qty, price, grand_total, hpp_satuan, total_hpp, laba_kotor, emp_code, emp_name, paid_total, status_bayar, last_synced
 	buffer := make([][]any, 0, batchSize)
 	total := 0
 	flush := func() error {
@@ -141,29 +146,32 @@ func (s *Service) MigrateSales(ctx context.Context) string {
 
 func (s *Service) scanSalesRow(rows *sql.Rows, syncTS string) ([]any, bool) {
 	var (
-		docDate    sql.NullTime
-		docNo      sql.NullString
-		code       sql.NullString
-		depCode    sql.NullString
-		depName    sql.NullString
-		parName    sql.NullString
-		iteCode    sql.NullString
-		iteName    sql.NullString
-		qtyDef     sql.NullString // DECIMAL from SUM; Java rs.getInt truncates
-		price      sql.NullString
-		grandTotal sql.NullString
-		hppSatuan  sql.NullString
-		totalHpp   sql.NullString
-		labaKotor  sql.NullString
-		empCode    sql.NullString
-		empName    sql.NullString
+		docDate     sql.NullTime
+		docNo       sql.NullString
+		code        sql.NullString
+		depCode     sql.NullString
+		depName     sql.NullString
+		parName     sql.NullString
+		iteCode     sql.NullString
+		iteName     sql.NullString
+		qtyDef      sql.NullString // DECIMAL from SUM; Java rs.getInt truncates
+		price       sql.NullString
+		grandTotal  sql.NullString
+		hppSatuan   sql.NullString
+		totalHpp    sql.NullString
+		labaKotor   sql.NullString
+		empCode     sql.NullString
+		empName     sql.NullString
+		paidTotal   sql.NullString
+		statusBayar sql.NullString
 	)
 	if err := rows.Scan(&docDate, &docNo, &code, &depCode, &depName, &parName, &iteCode, &iteName,
-		&qtyDef, &price, &grandTotal, &hppSatuan, &totalHpp, &labaKotor, &empCode, &empName); err != nil {
+		&qtyDef, &price, &grandTotal, &hppSatuan, &totalHpp, &labaKotor, &empCode, &empName,
+		&paidTotal, &statusBayar); err != nil {
 		s.logger.Warn("Error processing Sales row", "err", err)
 		return nil, false
 	}
-	row := make([]any, 17)
+	row := make([]any, 19)
 	row[0] = dateString(docDate)
 	row[1] = nullStr(docNo)
 	row[2] = nullStr(code)
@@ -180,15 +188,17 @@ func (s *Service) scanSalesRow(rows *sql.Rows, syncTS string) ([]any, bool) {
 	row[13] = nullStr(labaKotor)
 	row[14] = nullStr(empCode)
 	row[15] = nullStr(empName)
-	row[16] = syncTS
+	row[16] = nullStr(paidTotal)
+	row[17] = nullStr(statusBayar)
+	row[18] = syncTS
 	return row, true
 }
 
 // saveSalesBatch upserts up to batchSize sales rows in one statement.
 func (s *Service) saveSalesBatch(ctx context.Context, rows [][]any) error {
-	const perRow = 17
+	const perRow = 19
 	var b strings.Builder
-	b.WriteString(`INSERT INTO sales (id, doc_date, doc_no, code, par_name, dep_code, dep_name, ite_code, item_name, qty, price, grand_total, hpp_satuan, total_hpp, laba_kotor, emp_code, emp_name, last_synced) VALUES `)
+	b.WriteString(`INSERT INTO sales (id, doc_date, doc_no, code, par_name, dep_code, dep_name, ite_code, item_name, qty, price, grand_total, hpp_satuan, total_hpp, laba_kotor, emp_code, emp_name, paid_total, status_bayar, last_synced) VALUES `)
 	for i := range rows {
 		if i > 0 {
 			b.WriteString(", ")
@@ -210,6 +220,8 @@ func (s *Service) saveSalesBatch(ctx context.Context, rows [][]any) error {
 		laba_kotor = EXCLUDED.laba_kotor,
 		emp_code = EXCLUDED.emp_code,
 		emp_name = EXCLUDED.emp_name,
+		paid_total = EXCLUDED.paid_total,
+		status_bayar = EXCLUDED.status_bayar,
 		last_synced = EXCLUDED.last_synced`)
 	_, err := s.pg.ExecContext(ctx, b.String(), flatten(rows)...)
 	if err != nil {

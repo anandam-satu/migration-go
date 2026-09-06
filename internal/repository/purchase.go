@@ -59,24 +59,27 @@ func purchaseSearch(args *[]any, startDate, endDate *time.Time, categories []str
 }
 
 const purchaseColumns = `id, doc_date, doc_no_p, par_name, dep_code, dep_name, item_code, item_name, qty,
-	price::text AS price, grand_total::text AS grand_total, last_synced`
+	price::text AS price, grand_total::text AS grand_total, paid_total::text AS paid_total,
+	status_bayar, last_synced`
 
 func scanPurchase(rows *sql.Rows) (model.Purchase, error) {
 	var (
-		p          model.Purchase
-		docDate    sql.NullTime
-		parName    sql.NullString
-		depCode    sql.NullString
-		depName    sql.NullString
-		itemCode   sql.NullString
-		itemName   sql.NullString
-		qty        sql.NullInt64
-		price      sql.NullString
-		grandTotal sql.NullString
-		lastSynced sql.NullTime
+		p           model.Purchase
+		docDate     sql.NullTime
+		parName     sql.NullString
+		depCode     sql.NullString
+		depName     sql.NullString
+		itemCode    sql.NullString
+		itemName    sql.NullString
+		qty         sql.NullInt64
+		price       sql.NullString
+		grandTotal  sql.NullString
+		paidTotal   sql.NullString
+		statusBayar sql.NullString
+		lastSynced  sql.NullTime
 	)
 	err := rows.Scan(&p.ID, &docDate, &p.DocNoP, &parName, &depCode, &depName, &itemCode, &itemName,
-		&qty, &price, &grandTotal, &lastSynced)
+		&qty, &price, &grandTotal, &paidTotal, &statusBayar, &lastSynced)
 	if err != nil {
 		return p, err
 	}
@@ -94,6 +97,8 @@ func scanPurchase(rows *sql.Rows) (model.Purchase, error) {
 	}
 	p.Price = decPtr(price)
 	p.GrandTotal = decPtr(grandTotal)
+	p.PaidTotal = decPtr(paidTotal)
+	p.StatusBayar = strPtr(statusBayar)
 	if lastSynced.Valid {
 		t := lastSynced.Time
 		p.LastSynced = &t
