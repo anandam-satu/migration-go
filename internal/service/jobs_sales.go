@@ -72,11 +72,15 @@ const sqlSalesSource = `
 	LEFT JOIN dbmpartner p ON d.par_id = p.id
 	LEFT JOIN anandamid26.dbmitem i ON t.ite_id = i.id
 	LEFT JOIN anandamid26.dbmdepartment dep ON i.dep_id = dep.id
-	LEFT JOIN anandamid26.dbtstockavg sa
-		ON sa.doc_id = d.id
-		AND sa.ite_id = t.ite_id
-		AND sa.doc_type IN (32, 33)
-		AND sa.avg_type = 1
+	-- Pre-aggregate dbtstockavg to ensure unique doc_id & ite_id rows,
+	-- preventing Cartesian product (row duplication) in qty_def sums.
+	LEFT JOIN (
+		SELECT doc_id, ite_id, MAX(price_avg) AS price_avg
+		FROM anandamid26.dbtstockavg
+		WHERE doc_type IN (32, 33)
+		  AND avg_type = 1
+		GROUP BY doc_id, ite_id
+	) sa ON sa.doc_id = d.id AND sa.ite_id = t.ite_id
 	GROUP BY
 		d.doc_no,
 		t.ite_name
