@@ -94,8 +94,6 @@ func (s *Service) MigrateSales(ctx context.Context) string {
 	syncTS := nowTimestamp()
 	start := time.Now()
 	log.Info("=== START MIGRASI SALES (UPSERT) ===")
-	s.logEstimate(ctx, sqlSalesSource, "SALES")
-
 	rows, err := s.mysql.QueryContext(ctx, sqlSalesSource)
 	if err != nil {
 		return s.fatal("Sales", err)
